@@ -35,12 +35,17 @@ public class SchemaDeploymentService
 
             var comparison = new SchemaComparison(sourceEndpoint, targetEndpoint);
 
-            // Exclude specific tables if specified
+            _logger.LogInformation(
+                "Schema comparison will include: Tables, Stored Procedures, Functions, Views, Triggers, and other database objects"
+            );
+
+            // Log table exclusions if specified
             if (excludedTables != null && excludedTables.Any())
             {
-                foreach (var table in excludedTables)
+                _logger.LogInformation("Table exclusions configured: {Count} table(s) will be excluded", excludedTables.Count);
+                foreach (var tableName in excludedTables)
                 {
-                    _logger.LogDebug("Excluding table: {Table}", table);
+                    _logger.LogDebug("  - Will exclude table: {Table}", tableName);
                 }
             }
 
@@ -53,9 +58,37 @@ public class SchemaDeploymentService
                 return null;
             }
 
+            // Filter out system tables and excluded tables
             var differences = comparisonResult.Differences
                 .Where(d => !d.Name.Contains("__RefactorLog") && !d.Name.Contains("__MigrationHistory"))
+                .Where(d => !IsExcludedTable(d.Name, excludedTables))
                 .ToList();
+
+            // Log excluded differences
+            var totalDifferences = comparisonResult.Differences.Count(d =>
+                !d.Name.Contains("__RefactorLog") && !d.Name.Contains("__MigrationHistory"));
+            var excludedCount = totalDifferences - differences.Count;
+
+            if (excludedCount > 0)
+            {
+                _logger.LogInformation("Filtered out {Count} difference(s) related to excluded tables", excludedCount);
+            }
+
+            // Log detailed breakdown of differences by object type
+            var differencesByType = differences
+                .GroupBy(d => d.DifferenceType.ToString())
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            _logger.LogInformation("Schema comparison complete. Found {DifferenceCount} differences", differences.Count);
+
+            if (differencesByType.Any())
+            {
+                _logger.LogInformation("Differences by object type:");
+                foreach (var kvp in differencesByType.OrderByDescending(x => x.Value))
+                {
+                    _logger.LogInformation("  - {ObjectType}: {Count}", kvp.Key, kvp.Value);
+                }
+            }
 
             var result = new SchemaComparisonResult
             {
@@ -69,11 +102,6 @@ public class SchemaDeploymentService
                 }).ToList(),
                 ComparisonResult = comparisonResult
             };
-
-            _logger.LogInformation(
-                "Schema comparison complete. Found {DifferenceCount} differences",
-                result.DifferenceCount
-            );
 
             return result;
         }
@@ -198,8 +226,35 @@ public class SchemaDeploymentService
         }
     }
 
-    // Note: DacFx SchemaComparison uses default comparison options
-    // Custom options can be configured through SchemaComparison properties if needed
+    /// <summary>
+    /// Checks if a difference name matches an excluded table
+    /// </summary>
+    private bool IsExcludedTable(string differenceName, List<string>? excludedTables)
+    {
+        if (excludedTables == null || !excludedTables.Any())
+            return false;
+
+        // Normalize the difference name to check against excluded tables
+        // DacFx difference names are typically in format like "[dbo].[TableName]" or include the object type
+        foreach (var excludedTable in excludedTables)
+        {
+            // Parse the excluded table name
+            var parts = excludedTable.Split('.');
+            string schema = parts.Length > 1 ? parts[0].Trim() : "dbo";
+            string tableName = parts.Length > 1 ? parts[1].Trim() : parts[0].Trim();
+
+            // Check if the difference name contains the table reference
+            // Match patterns like: [schema].[table], schema.table, or just [table]
+            if (differenceName.Contains($"[{schema}].[{tableName}]", StringComparison.OrdinalIgnoreCase) ||
+                differenceName.Contains($"{schema}.{tableName}", StringComparison.OrdinalIgnoreCase) ||
+                differenceName.Contains($"[{tableName}]", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 /// <summary>

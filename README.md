@@ -5,6 +5,8 @@ A .NET console application for managing Azure SQL Database schema deployments an
 ## Features
 
 - **Schema Comparison & Deployment**: Uses Microsoft SqlPackage DacFx to compare and deploy schema changes
+  - Includes: Tables, Stored Procedures, Functions, Views, Triggers, and other database objects
+  - Configurable table exclusions for selective deployments
 - **Config Table Data Sync**: Automatically synchronizes specified "config tables" data from source to targets
 - **Multi-Target Deployment**: Deploy to multiple databases in parallel with configurable parallelism
 - **Preview Mode**: See what changes will be applied without actually deploying them
@@ -14,7 +16,7 @@ A .NET console application for managing Azure SQL Database schema deployments an
   - Transaction support for data sync
   - Continue-on-error mode
   - Pre-deployment connection validation
-- **Comprehensive Logging**: Detailed logging of all operations
+- **Comprehensive Logging**: Detailed logging of all operations with object-type breakdowns
 
 ## Prerequisites
 
@@ -85,6 +87,11 @@ Edit `appsettings.json` (created from `appsettings.example.json`) to configure y
 - **SourceDatabase**: The development database to deploy FROM
 - **TargetDatabases**: List of target databases to deploy TO
 - **ConfigTables**: Tables that should have both schema AND data synchronized
+- **ExcludedTables**: Tables to exclude from schema comparison and deployment
+  - Format: `"schema.tablename"` or just `"tablename"` (defaults to `dbo` schema)
+  - Example: `["dbo.TempTable", "audit.AuditLog", "SystemLog"]`
+  - Use cases: Exclude temporary tables, audit logs, or environment-specific tables
+- **IncludedSchemas**: Optional list of schemas to include (if empty, all schemas are included)
 
 #### Deployment Options
 - **PreviewMode**: If true, shows changes without applying them
@@ -158,6 +165,29 @@ dotnet run -- --schema-only --yes
 dotnet run -- --targets Staging --data-only
 ```
 
+### Excluding Tables from Deployment
+
+To exclude specific tables from schema comparison and deployment, add them to the `ExcludedTables` array in your `appsettings.json`:
+
+```json
+{
+  "ExcludedTables": [
+    "dbo.TempTable",
+    "audit.AuditLog",
+    "SystemLog",
+    "dbo.SessionData"
+  ]
+}
+```
+
+This is useful for:
+- **Environment-specific tables**: Tables that should remain unique per environment
+- **Audit/logging tables**: Tables that shouldn't be overwritten with dev data structure
+- **Temporary tables**: Tables used for testing or temporary operations
+- **Large historical data tables**: Tables where schema changes aren't needed
+
+**Note**: Excluded tables will not be compared or modified during deployment, but they will remain in the target database unchanged.
+
 ### Help
 
 Display help information:
@@ -172,7 +202,10 @@ dotnet run -- --help
 
 1. **Connection Validation**: Validates connectivity to source and all target databases
 2. **Schema Comparison**: Uses DacFx SchemaComparison to compare source and target schemas
-3. **Change Analysis**: Identifies differences (tables, columns, indexes, stored procedures, etc.)
+   - Compares all database objects: Tables, Stored Procedures, Functions, Views, Triggers, etc.
+   - Applies table exclusions if configured
+   - Provides detailed breakdown of differences by object type
+3. **Change Analysis**: Identifies differences (tables, columns, indexes, stored procedures, functions, views, triggers, etc.)
 4. **Destructive Change Check**: Optionally blocks destructive operations
 5. **Script Generation**: Generates T-SQL deployment script (in preview mode)
 6. **Deployment**: Applies schema changes to target database
